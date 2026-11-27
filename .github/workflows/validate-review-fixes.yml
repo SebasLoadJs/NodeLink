@@ -15,18 +15,29 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - pr: 265
+            sha: d0c3f9348a28d2e3fbc5e7f689cae6e86fadad9a
+            harness: 39cae5066be93efe4ca9507b4b8f5cbb5a693210
+          - pr: 266
+            sha: 13c12ad1653436ed4ff96626d422f54ae65f4fca
+            harness: 944cd7c3cdd5c38ca47b06a890e33e0e94c6c0f6
           - pr: 267
-            sha: c6e991ceb7ed61baaf0bb343a6e90722785c88c1
+            sha: e84a0a35958650d252461418123a5c82aef8395a
+            harness: c6e991ceb7ed61baaf0bb343a6e90722785c88c1
           - pr: 268
-            sha: 710a681f1d1ebea44a22802aaa2b60924bc9d43e
+            sha: 2f62c8b4d873636cff58062597f943ef9579a5b7
+            harness: 710a681f1d1ebea44a22802aaa2b60924bc9d43e
           - pr: 269
             sha: 7df140312bf06214366b07c8a2a93acc93c76712
+            harness: 7df140312bf06214366b07c8a2a93acc93c76712
           - pr: 270
-            sha: 72f4f8db58773b655dbe1e122de2a76e3c488152
+            sha: 017c6cc7ae341ba105849647711fc90d552b1d76
+            harness: 72f4f8db58773b655dbe1e122de2a76e3c488152
     env:
       HUSKY: 0
       BASE: 86c6a00d022cbf1cafdbc5eea39a2b7033637485
       CANDIDATE: ${{ matrix.sha }}
+      HARNESS: ${{ matrix.harness }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,6 +58,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$CANDIDATE"
           git diff --exit-code "$BASE" HEAD -- README.md .github/workflows
           git diff --check "$BASE" HEAD
+          if git diff --name-only "$BASE" HEAD | grep -E '(\.test\.|\.spec\.|^tests?/)'; then exit 1; fi
+          git diff --exit-code "$HARNESS" HEAD -- . ':(exclude)*.test.ts' ':(exclude).github/workflows/automix-regression.yml'
           npm run type-check
           npm run build
           while IFS= read -r -d '' file; do
@@ -57,22 +70,47 @@ jobs:
                 ;;
             esac
           done < <(git diff --name-only -z --diff-filter=ACM "$BASE" HEAD -- src config.default.ts)
-      - name: Node 24
+      - name: Prepare temporary external regression harness
         shell: bash
         run: |
+          set -euo pipefail
+          harness_dir="$(mktemp -d "$RUNNER_TEMP/nodelink-harness.XXXXXX")"
+          git archive "$CANDIDATE" | tar -x -C "$harness_dir"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$harness_dir/node_modules"
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              src/*.test.ts)
+                mkdir -p "$harness_dir/$(dirname "$file")"
+                git show "$HARNESS:$file" > "$harness_dir/$file"
+                ;;
+            esac
+          done < <(git diff --name-only -z --diff-filter=D "$HARNESS" "$CANDIDATE")
+          echo "EXTERNAL_HARNESS=$harness_dir" >> "$GITHUB_ENV"
+          echo "Exact submitted SHA: $(git rev-parse HEAD)"
+      - name: Node 24 external harness
+        shell: bash
+        run: |
+          cd "$EXTERNAL_HARNESS"
           mapfile -d '' tests < <(find src -name '*.test.ts' -print0)
           node --experimental-strip-types --test "${tests[@]}"
-      - name: Bun
+      - name: Bun external harness
         shell: bash
         run: |
+          cd "$EXTERNAL_HARNESS"
           mapfile -d '' tests < <(find src -name '*.test.ts' ! -path 'src/server/clientIsolation.test.ts' -print0)
           bun test --timeout 30000 "${tests[@]}"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Node 22
+      - name: Node 22 type-check and external harness
         shell: bash
         run: |
           npm run type-check
+          cd "$EXTERNAL_HARNESS"
           mapfile -d '' tests < <(find src -name '*.test.ts' -print0)
           node --experimental-strip-types --test "${tests[@]}"
+      - name: Verify checkout untouched
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
+          git diff --exit-code HEAD
