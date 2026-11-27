@@ -13,7 +13,7 @@ jobs:
     env:
       HUSKY: 0
       BASE: 86c6a00d022cbf1cafdbc5eea39a2b7033637485
-      CANDIDATE: a75e524311b971f633d7ee34c6aeddb55c0283b6
+      CANDIDATE: 09c642906af98e0b724183bd329dae4666d7c48a
     steps:
       - uses: actions/checkout@v4
         with:
