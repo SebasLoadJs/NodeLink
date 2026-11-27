@@ -1,0 +1,78 @@
+name: Validate review fixes on exact submitted commits
+on:
+  push:
+    branches: [review/integration]
+    paths: ['.github/workflows/validate-review-fixes.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  candidate:
+    if: github.repository == 'SebasLoadJs/NodeLink' && github.ref == 'refs/heads/review/integration'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pr: 267
+            sha: c6e991ceb7ed61baaf0bb343a6e90722785c88c1
+          - pr: 268
+            sha: 710a681f1d1ebea44a22802aaa2b60924bc9d43e
+          - pr: 269
+            sha: 7df140312bf06214366b07c8a2a93acc93c76712
+          - pr: 270
+            sha: 72f4f8db58773b655dbe1e122de2a76e3c488152
+    env:
+      HUSKY: 0
+      BASE: 86c6a00d022cbf1cafdbc5eea39a2b7033637485
+      CANDIDATE: ${{ matrix.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: npm install --no-audit --no-fund --no-package-lock
+      - name: Verify exact candidate and compiled sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
+          git diff --exit-code "$BASE" HEAD -- README.md .github/workflows
+          git diff --check "$BASE" HEAD
+          npm run type-check
+          npm run build
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              *.test.ts|*.d.ts) continue ;;
+              src/*.ts|config.default.ts)
+                git diff --exit-code HEAD -- "dist/${file%.ts}.js"
+                ;;
+            esac
+          done < <(git diff --name-only -z --diff-filter=ACM "$BASE" HEAD -- src config.default.ts)
+      - name: Node 24
+        shell: bash
+        run: |
+          mapfile -d '' tests < <(find src -name '*.test.ts' -print0)
+          node --experimental-strip-types --test "${tests[@]}"
+      - name: Bun
+        shell: bash
+        run: |
+          mapfile -d '' tests < <(find src -name '*.test.ts' ! -path 'src/server/clientIsolation.test.ts' -print0)
+          bun test --timeout 30000 "${tests[@]}"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Node 22
+        shell: bash
+        run: |
+          npm run type-check
+          mapfile -d '' tests < <(find src -name '*.test.ts' -print0)
+          node --experimental-strip-types --test "${tests[@]}"
