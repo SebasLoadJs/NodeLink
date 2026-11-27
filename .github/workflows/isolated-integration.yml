@@ -27,7 +27,7 @@ jobs:
             '267 bcc24dbb6019d6af760332ca9959cae46f53f0ab' \
             '268 2ecc4abb8151f163acfd49891bda633222f9be27' \
             '269 d1d6d8fcd97701b2c2c41dd0956bca52ad08ed16' \
-            '270 2aa4aab4cf07d3916ca5cb36e99906d982f05e3f'; do
+            '270 f28706f13eb13014ec15a674385014631503513c'; do
             read -r pr sha <<< "$entry"
             echo "Integrating PR #$pr at $sha"
             git cat-file -e "$sha^{commit}" || git fetch origin "$sha"

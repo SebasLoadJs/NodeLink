@@ -36,9 +36,9 @@ for name in paths:
             if "const observer = new AudioVisualization()" in a and "const observer = new MusicAnalysis()" in b:
                 return a+"      streams.push(observer)\n      this.pipes?.push(observer)\n    }\n"+b
         elif name in ("config.default.ts", "src/typings/config/config.types.ts", "src/typings/playback/player.types.ts"):
-            if ("visualization" in a.lower() and ("musicAnalysis" in b or "protected" in b or "audioProcessing" in b)):
-                if "getAudioVisualization?: () =>" in a and "getMusicAnalysis?: () =>" in b:
-                    return a+"    | null\n"+b
+            if name == "src/typings/playback/player.types.ts" and "getAudioVisualization?: () =>" in a and "getMusicAnalysis?: () =>" in b:
+                return a+"    | null\n"+b
+            if ("visualization" in a.lower() and ("musicanalysis" in b.lower() or "protected" in b or "audioProcessing" in b)):
                 return a+b
         return m.group(0)
     updated = pattern.sub(resolve, original)
