@@ -42,6 +42,7 @@ jobs:
                     ;;
                 esac
               done
+              python3 .github/review-tools/resolve-observer-conflicts.py "$pr"
               if test -n "$(git diff --name-only --diff-filter=U)"; then
                 echo "::error::Unresolved source conflicts while integrating PR #$pr"
                 git diff --name-only --diff-filter=U
