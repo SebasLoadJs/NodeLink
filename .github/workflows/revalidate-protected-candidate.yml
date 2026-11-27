@@ -1,0 +1,65 @@
+name: Validate focused Protected candidate
+on:
+  push:
+    branches: [review/integration]
+    paths: ['.github/workflows/revalidate-protected-candidate.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HUSKY: 0
+      BASE: 86c6a00d022cbf1cafdbc5eea39a2b7033637485
+      CANDIDATE: a75e524311b971f633d7ee34c6aeddb55c0283b6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: npm install --no-audit --no-fund --no-package-lock
+      - name: Verify unrelated files and exact build
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
+          git diff --exit-code "$BASE" HEAD -- README.md src/server dist/src/server src/modules/config dist/src/modules/config src/managers/configValidationManager.ts dist/src/managers/configValidationManager.js
+          git diff --check "$BASE" HEAD
+          npm run type-check
+          npm run build
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              *.test.ts|*.d.ts) continue ;;
+              src/*.ts|config.default.ts)
+                git diff --exit-code HEAD -- "dist/${file%.ts}.js"
+                ;;
+            esac
+          done < <(git diff --name-only -z --diff-filter=ACM "$BASE" HEAD -- src config.default.ts)
+      - name: Node 24
+        shell: bash
+        run: |
+          mapfile -d '' tests < <(find src -name '*.test.ts' -print0)
+          node --experimental-strip-types --test "${tests[@]}"
+      - name: Bun
+        shell: bash
+        run: |
+          mapfile -d '' tests < <(find src -name '*.test.ts' ! -path 'src/server/clientIsolation.test.ts' -print0)
+          bun test --timeout 30000 "${tests[@]}"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Node 22
+        shell: bash
+        run: |
+          npm run type-check
+          mapfile -d '' tests < <(find src -name '*.test.ts' -print0)
+          node --experimental-strip-types --test "${tests[@]}"
