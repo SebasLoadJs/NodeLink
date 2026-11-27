@@ -1,0 +1,146 @@
+name: Prepare isolated submission candidates
+on:
+  push:
+    branches: [review/integration]
+    paths:
+      - '.github/workflows/prepare-review-candidates.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: prepare-review-candidates
+  cancel-in-progress: true
+jobs:
+  candidate:
+    if: github.repository == 'SebasLoadJs/NodeLink' && github.ref == 'refs/heads/review/integration'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pr: 265
+            reviewed: 58118e7789773fdd9bfe5d68f2f804a9b0e009ee
+          - pr: 266
+            reviewed: eefee9449143e77822ed636cbc3144140996d44d
+          - pr: 267
+            reviewed: bcc24dbb6019d6af760332ca9959cae46f53f0ab
+          - pr: 268
+            reviewed: 2ecc4abb8151f163acfd49891bda633222f9be27
+          - pr: 269
+            reviewed: de47046ba786c8212598c3bd93846a93fcd24e10
+          - pr: 270
+            reviewed: 6fac187e2fd83dddcc217826c16703a3157b2d66
+    env:
+      UPSTREAM: 86c6a00d022cbf1cafdbc5eea39a2b7033637485
+      REVIEWED: ${{ matrix.reviewed }}
+      PR_NUMBER: ${{ matrix.pr }}
+      HUSKY: 0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prepare focused branch without touching open PRs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch --detach "$REVIEWED"
+          if ! git merge-base --is-ancestor "$UPSTREAM" HEAD; then
+            if ! git merge --no-ff --no-commit "$UPSTREAM"; then
+              git diff --name-only --diff-filter=U
+              git diff --cc -- src config.default.ts
+              exit 1
+            fi
+          fi
+          git restore --source="$UPSTREAM" --staged --worktree -- README.md
+          git rm -f --ignore-unmatch .github/workflows/fork-review-validation.yml
+          # Protected Audio reviewer explicitly did not request extra tests.
+          # Keep those harnesses on review/pr-269, not in the submission.
+          if [ "$PR_NUMBER" = 269 ]; then
+            git rm -f --ignore-unmatch src/playback/processing/VolumeTransformer.test.ts src/playback/processing/protectedProcessingOptions.test.ts
+          fi
+          if git rev-parse -q --verify MERGE_HEAD >/dev/null || ! git diff --cached --quiet; then
+            git commit -m 'chore(review): align contribution with upstream and remove fork-only files'
+          fi
+          git merge-base --is-ancestor "$UPSTREAM" HEAD
+          git diff --exit-code "$UPSTREAM" HEAD -- README.md
+          git diff --stat "$UPSTREAM" HEAD
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: npm install --no-audit --no-fund --no-package-lock
+      - name: Format changed TypeScript files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(git diff --name-only -z --diff-filter=ACM "$UPSTREAM" HEAD -- '*.ts')
+          if [ "${#files[@]}" -gt 0 ]; then
+            npx --no-install biome format --write "${files[@]}"
+            npx --no-install biome format "${files[@]}"
+            git add -- "${files[@]}"
+          fi
+          if ! git diff --cached --quiet; then
+            git commit -m 'style(review): follow NodeLink source formatting'
+          fi
+      - name: Build and commit matching generated output
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run type-check
+          npm run build
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              *.test.ts|*.d.ts) continue ;;
+              src/*.ts|config.default.ts)
+                output="dist/${file%.ts}.js"
+                test -f "$output"
+                node --check "$output"
+                git add -f -- "$output"
+                ;;
+            esac
+          done < <(git diff --name-only -z --diff-filter=ACM "$UPSTREAM" HEAD -- src config.default.ts)
+          if ! git diff --cached --quiet; then
+            git commit -m 'build(review): regenerate matching compiled sources'
+          fi
+          echo "Candidate SHA: $(git rev-parse HEAD)"
+          git diff --check "$UPSTREAM" HEAD
+          git diff --exit-code "$UPSTREAM" HEAD -- README.md
+          test ! -e .github/workflows/fork-review-validation.yml
+          git status --short
+      - name: Node 24 tests on candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' tests < <(find src -name '*.test.ts' -print0)
+          node --experimental-strip-types --test "${tests[@]}"
+      - name: Bun tests on candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' tests < <(find src -name '*.test.ts' ! -path 'src/server/clientIsolation.test.ts' -print0)
+          bun test --timeout 30000 "${tests[@]}"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Node 22 tests on candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run type-check
+          mapfile -d '' tests < <(find src -name '*.test.ts' -print0)
+          node --experimental-strip-types --test "${tests[@]}"
+      - name: Publish only validated candidate in fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$PR_NUMBER" in 265|266|267|268|269|270) ;; *) exit 1;; esac
+          test "$(git remote get-url origin)" = 'https://github.com/SebasLoadJs/NodeLink'
+          echo "Validated candidate #$PR_NUMBER: $(git rev-parse HEAD)"
+          git push origin "HEAD:refs/heads/ready/pr-$PR_NUMBER"
