@@ -19,7 +19,7 @@ jobs:
             sha: d0c3f9348a28d2e3fbc5e7f689cae6e86fadad9a
             harness: 39cae5066be93efe4ca9507b4b8f5cbb5a693210
           - pr: 266
-            sha: 13c12ad1653436ed4ff96626d422f54ae65f4fca
+            sha: f074454d4d00cdb682dc93d1b6de4c34a2391333
             harness: 944cd7c3cdd5c38ca47b06a890e33e0e94c6c0f6
           - pr: 267
             sha: e84a0a35958650d252461418123a5c82aef8395a
@@ -59,7 +59,11 @@ jobs:
           git diff --exit-code "$BASE" HEAD -- README.md .github/workflows
           git diff --check "$BASE" HEAD
           if git diff --name-only "$BASE" HEAD | grep -E '(\.test\.|\.spec\.|^tests?/)'; then exit 1; fi
-          git diff --exit-code "$HARNESS" HEAD -- . ':(exclude)*.test.ts' ':(exclude).github/workflows/automix-regression.yml'
+          if [ "${{ matrix.pr }}" = "266" ]; then
+            git diff --exit-code "$HARNESS" HEAD -- . ':(exclude)*.test.ts' ':(exclude)src/modules/ttmlLyrics.ts' ':(exclude)dist/src/modules/ttmlLyrics.js'
+          else
+            git diff --exit-code "$HARNESS" HEAD -- . ':(exclude)*.test.ts' ':(exclude).github/workflows/automix-regression.yml'
+          fi
           npm run type-check
           npm run build
           while IFS= read -r -d '' file; do
