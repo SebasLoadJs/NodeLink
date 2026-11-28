@@ -32,11 +32,11 @@ function decodeXml(value: string): string {
   )
 }
 
-/** Supported TTML clock and offset times in milliseconds; no guessed frame rates. */
+/** TTML clock/offset times and Unison bare seconds, converted to milliseconds. */
 export function parseTtmlTime(value?: string): number | undefined {
   if (!value) return undefined
   const raw = value.trim()
-  const offset = raw.match(/^(\d+(?:\.\d+)?)(ms|s|m|h)$/i)
+  const offset = raw.match(/^(\d+(?:\.\d+)?)(ms|s|m|h)?$/i)
   if (offset) {
     const factors: Record<string, number> = {
       ms: 1,
@@ -45,7 +45,7 @@ export function parseTtmlTime(value?: string): number | undefined {
       h: 3600000
     }
     const ms =
-      Number(offset[1]) * (factors[offset[2]?.toLowerCase() ?? ''] ?? NaN)
+      Number(offset[1]) * (factors[offset[2]?.toLowerCase() ?? 's'] ?? NaN)
     return Number.isSafeInteger(Math.round(ms)) ? Math.round(ms) : undefined
   }
   if (!/^\d+:\d{2}(?::\d{2})?(?:\.\d+)?$/.test(raw)) return undefined
