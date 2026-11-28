@@ -19,7 +19,7 @@ jobs:
             sha: d0c3f9348a28d2e3fbc5e7f689cae6e86fadad9a
             harness: 39cae5066be93efe4ca9507b4b8f5cbb5a693210
           - pr: 266
-            sha: f074454d4d00cdb682dc93d1b6de4c34a2391333
+            sha: e8394733a5560d54ffc74ab9c2562420569881bc
             harness: 944cd7c3cdd5c38ca47b06a890e33e0e94c6c0f6
           - pr: 267
             sha: e84a0a35958650d252461418123a5c82aef8395a
