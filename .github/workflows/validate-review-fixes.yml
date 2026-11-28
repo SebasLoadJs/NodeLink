@@ -19,7 +19,7 @@ jobs:
             sha: d0c3f9348a28d2e3fbc5e7f689cae6e86fadad9a
             harness: 39cae5066be93efe4ca9507b4b8f5cbb5a693210
           - pr: 266
-            sha: e8394733a5560d54ffc74ab9c2562420569881bc
+            sha: 0c0c8ff8e757124f9bda5f4132617e9d9580da24
             harness: 944cd7c3cdd5c38ca47b06a890e33e0e94c6c0f6
           - pr: 267
             sha: e84a0a35958650d252461418123a5c82aef8395a
@@ -113,6 +113,107 @@ jobs:
           cd "$EXTERNAL_HARNESS"
           mapfile -d '' tests < <(find src -name '*.test.ts' -print0)
           node --experimental-strip-types --test "${tests[@]}"
+      - name: Audit official Unison TTML fixtures outside checkout
+        if: matrix.pr == 266
+        shell: bash
+        run: |
+          set -euo pipefail
+          lab="$(mktemp -d "$RUNNER_TEMP/unison-fixtures.XXXXXX")"
+          export LAB="$lab"
+          git show e8394733a5560d54ffc74ab9c2562420569881bc:dist/src/modules/ttmlLyrics.js > "$lab/previous.mjs"
+          root="https://raw.githubusercontent.com/better-lyrics/unison/5521c80a87ad29c27d2e32684cac649cc548d601/src/utils/__fixtures__"
+          mkdir -p "$lab/revisions" "$lab/malformed-ttml"
+          while read -r hash file; do
+            curl --fail --silent --show-error --retry 2 --max-time 30 "$root/$file" -o "$lab/$file"
+            test "$(git hash-object "$lab/$file")" = "$hash"
+          done <<'FIXTURES'
+          41ea01bae1f3c3708a5764dbfdb452e10c1e05f2 malformed-ttml/bare-ampersand.ttml
+          8e8e0b1eade9c8f8d9e1d8ceee0f1881a4830c78 malformed-ttml/code-fence.ttml
+          423e61b59dafce6553bb145e98971ec97ddd5bee malformed-ttml/control-char.ttml
+          7276e8758f5400ff6b8241d17ee75eecf9f51d21 malformed-ttml/corrupted-tag.ttml
+          94a51a8371f6f9723463853040ff0b6e98d62ce9 malformed-ttml/escaped-quotes.ttml
+          289a5ac24cdac2e3f662071ea84e0a286f83eed4 malformed-ttml/half-written-tag.ttml
+          b8d8fd0c50a2b71992bc8ba58cfe7fb904ce17fc malformed-ttml/mismatched-tag.ttml
+          6ca3827499e58b41773769b7c50c55e56ed55659 malformed-ttml/non-uri-namespace.ttml
+          f6602759f031a17fbfd9837f00cb069ecb6558c8 malformed-ttml/text-before-root.ttml
+          736329bd1c8546b9294637d27c8f7bc93479078f malformed-ttml/trailing-junk.ttml
+          1d3f1a88c6650a4dceff38a37c0eafa58ea58554 malformed-ttml/two-documents.ttml
+          4b37bc0b9464814b79473371d1ff774310356f05 malformed-ttml/unbound-prefix.ttml
+          44cfeb1dd08f321422b199e3b2237ac3194336fd revisions/90210-after.ttml
+          b6515231b999df324f71b37c0da387d5ff4325cb revisions/90210-before.ttml
+          8229bcf3fdea38922be2b7830f023c1ef9e4cb50 revisions/amazing-grace.ttml
+          FIXTURES
+          cat > "$lab/verify.mjs" <<'JS'
+          import assert from 'node:assert/strict'
+          import { readFileSync, readdirSync } from 'node:fs'
+          import { join } from 'node:path'
+          import { pathToFileURL } from 'node:url'
+          import * as previous from './previous.mjs'
+          const source = await import(pathToFileURL(join(process.env.GITHUB_WORKSPACE, 'src/modules/ttmlLyrics.ts')).href)
+          const compiled = await import(pathToFileURL(join(process.env.GITHUB_WORKSPACE, 'dist/src/modules/ttmlLyrics.js')).href)
+          const cases = [
+            ['12.000',12000],['15.600',15600],['12.600',12600],['0',0],
+            ['0.001',1],[' 1.2345 ',1235],['12s',12000],['12ms',12],
+            ['1.5m',90000],['1h',3600000],['1:24.000',84000],
+            ['00:00:05.000',5000],['12f',undefined],['-1',undefined],
+            ['1e3',undefined],['Infinity',undefined],['999999999999999999999',undefined],
+            ['1.2.3',undefined],['',undefined]
+          ]
+          assert.equal(previous.parseTtmlTime('12.000'), undefined)
+          for (const api of [source, compiled]) {
+            for (const [value, expected] of cases) assert.equal(api.parseTtmlTime(value), expected, value)
+            const p = api.parseTtmlLyrics
+            const wrap = x => '<tt><body>' + x + '</body></tt>'
+            const bounds = r => r.lines.map(l => [l.time,l.duration,l.words[0].time,l.words[0].duration])
+            assert.deepEqual(bounds(p('<tt itunes:timing="Word"><body><div begin="12.000" end="15.600"><p begin="12.000" end="15.600"><span begin="12.600" dur="0.600">word</span></p></div></body></tt>')),[[12000,3600,12600,600]])
+            assert.deepEqual(p(wrap('<div begin="10s" end="20s"><p begin="5s" end="15s">Hello</p></div>')).lines.map(l=>[l.time,l.duration]),[[15000,5000]])
+            assert.deepEqual(bounds(p(wrap('<div begin="10.000" end="20.000"><p begin="5.000" dur="8.000"><span begin="1.000" dur="9.000">word</span></p></div>'))),[[15000,5000,16000,4000]])
+            assert.equal(p(wrap('<div><p begin="1s" end="2s"><span begin="1s">hello</span></p></div>')).lines[0].words[0].duration,0)
+            assert.equal(p(wrap('<div><p begin="1s">timed</p><p>untimed</p></div>')).synced,false)
+            assert.deepEqual(p('<!DOCTYPE tt [<!ENTITY x SYSTEM "file:///fixture">]><tt><p>&x;</p></tt>'),{lines:[],synced:false})
+          }
+          let total = 0
+          for (const dir of ['revisions','malformed-ttml']) {
+            for (const name of readdirSync(join(process.env.LAB,dir)).sort()) {
+              const xml = readFileSync(join(process.env.LAB,dir,name),'utf8')
+              const old = previous.parseTtmlLyrics(xml)
+              const result = source.parseTtmlLyrics(xml)
+              assert.deepEqual(compiled.parseTtmlLyrics(xml),result, name+' source/compiled')
+              const words = result.lines.reduce((n,l)=>n+(l.words?.length??0),0)
+              const background = result.lines.filter(l=>l.isBackground).length
+              if (name === 'amazing-grace.ttml') {
+                assert.equal(old.lines.length,4)
+                assert.equal(result.lines.length,16)
+                assert.equal(result.synced,true)
+                assert.equal(words,98)
+                assert.equal(result.lines[0].time,12000)
+                assert.equal(result.lines[0].duration,3600)
+                assert.equal(result.lines[0].words[1].time,12600)
+                assert.equal(result.lines[0].words[1].duration,600)
+                assert.equal(result.lines.at(-1).time,75000)
+              } else {
+                assert.deepEqual(result,old,name+' unchanged output')
+                if (dir==='revisions') {
+                  assert.equal(result.synced,true)
+                  assert.equal(result.lines.length,67)
+                  assert.equal(background,11)
+                  assert.equal(words,name==='90210-after.ttml'?535:530)
+                }
+              }
+              if (dir==='revisions') {
+                for (const l of result.lines) for (const w of l.words??[]) {
+                  assert.ok(w.time>=l.time)
+                  assert.ok(!l.duration||w.time+w.duration<=l.time+l.duration)
+                }
+              }
+              console.log(JSON.stringify({fixture:dir+'/'+name,previousLines:old.lines.length,lines:result.lines.length,words,background,synced:result.synced}))
+              total++
+            }
+          }
+          assert.equal(total,15)
+          console.log('All 15 pinned fixtures audited; 14 unchanged, Amazing Grace recovered 16/16 lines; source/compiled parity verified.')
+          JS
+          node --experimental-strip-types "$lab/verify.mjs"
       - name: Verify checkout untouched
         shell: bash
         run: |
