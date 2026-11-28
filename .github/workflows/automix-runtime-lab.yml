@@ -1,0 +1,52 @@
+name: External AutoMix runtime comparison
+on:
+  push:
+    branches: [review/integration]
+    paths: ['.github/workflows/automix-runtime-lab.yml', 'review-lab/automix.mjs']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    if: github.repository == 'SebasLoadJs/NodeLink' && github.ref == 'refs/heads/review/integration'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HUSKY: 0
+      BASE: 86c6a00d022cbf1cafdbc5eea39a2b7033637485
+      CANDIDATE: 017c6cc7ae341ba105849647711fc90d552b1d76
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare exact checkouts
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
+          git worktree add --detach "$RUNNER_TEMP/candidate" "$CANDIDATE"
+          for variant in base candidate; do
+            (cd "$RUNNER_TEMP/$variant" && npm install --no-audit --no-fund --no-package-lock && npm ls --all --json > "$RUNNER_TEMP/$variant-deps.json" || exit 1)
+          done
+      - name: Benchmark serially on same runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/results"
+          for variant in base candidate candidate base; do
+            sha="$BASE"
+            if [ "$variant" = candidate ]; then sha="$CANDIDATE"; fi
+            output="$(mktemp "$RUNNER_TEMP/results/$variant-XXXXXX.json")"
+            node --experimental-strip-types "$GITHUB_WORKSPACE/review-lab/automix.mjs" "$RUNNER_TEMP/$variant" "$sha" "$output"
+          done
+          cp "$RUNNER_TEMP/"*-deps.json "$RUNNER_TEMP/results/"
+      - name: Upload raw measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: automix-runtime-comparison
+          path: ${{ runner.temp }}/results/
